@@ -6,16 +6,6 @@ env = gym.make("Taxi-v3", render_mode="human").env
 
 state = env.reset()
 
-# terminated = False
-# while not terminated:
-#     action = env.action_space.sample()  # agent policy that uses the observation and info
-#     observation, reward, terminated, truncated, info = env.step(action)
-
-#     if terminated or truncated:
-#         observation, info = env.reset()
-#         break
-
-# env.close()
 num_steps = 200
 rewards = []
 for _ in range(10):
