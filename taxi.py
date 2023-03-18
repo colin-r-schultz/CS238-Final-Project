@@ -3,6 +3,7 @@ from contextlib import closing
 from io import StringIO
 from os import path
 from typing import Optional
+import random
 
 import numpy as np
 
@@ -528,6 +529,70 @@ class TaxiEnv(Env):
             pygame.display.quit()
             pygame.quit()
 
+def train_q_learning(env, learn_rate, discount_rate, epsilon, decay_rate, num_runs, max_steps):
+    state_size = env.observation_space.n
+    action_size = env.action_space.n
+    q_table = np.zeros((state_size, action_size))
+    for run in range(num_runs):
+        print(f"Run #{run}".format(run + 1))
+        state = env.reset()
+        terminated = False
+        for step in range(max_steps):
+            cur_state = state[0]
+            if random.uniform(0, 1) < epsilon:
+                action = env.action_space.sample()
+            else:
+                action = np.argmax(q_table[cur_state, :])
+            observation, reward, terminated, truncated, info = env.step(action)
+            q_table[cur_state, action] = q_table[cur_state,action] + learn_rate*(reward + discount_rate*np.max(q_table[observation, :]) - q_table[cur_state, action])
+            state = (observation, info)
+
+            if terminated:
+                break
+        epsilon = np.exp(-decay_rate * run)
+
+    return q_table
+
+def run_q_learning(env, q_table, max_steps):
+    state = env.reset()
+    terminated = False
+    rewards = 0
+
+    for step in range(max_steps):
+        print(f"Step {step}".format(step + 1))
+        cur_state = state[0]
+        action = np.argmax(q_table[cur_state, :])
+        observation, reward, terminated, truncated, info = env.step(action)
+        rewards += reward
+        print(env.render())
+        print(f"Score: {rewards}")
+        state = (observation, info)
+
+        if terminated:
+            break
+    print(f"Final Score: {rewards}")
+    env.close()
+
+def run_random_agent(env, max_steps):
+    state = env.reset()
+    terminated = False
+    rewards = 0
+
+    for step in range(max_steps):
+        print(f"Step {step}".format(step + 1))
+        action = env.action_space.sample()  # agent policy that uses the observation and info
+        observation, reward, terminated, truncated, info = env.step(action)
+        rewards += reward
+        print(env.render())
+        print(f"Score: {rewards}")
+
+        if terminated:
+            break
+    
+    print(f"Final Score: {rewards}")
+    env.close() 
+
+
 
 # Taxi rider from https://franuka.itch.io/rpg-asset-pack
 # All other assets by Mel Tillery http://www.cyaneus.com/
@@ -535,14 +600,9 @@ class TaxiEnv(Env):
 if __name__ == "__main__":
     env = TaxiEnv("ansi", ice_locs=[(2, 1), (2, 2), (2, 3)], ice_prob=0.1)
 
+    # uncomment next line if you want to run Random Agent
+    # run_random_agent(env, 99)
 
-    env.reset()
-    for i in range(10):
-        action = env.action_space.sample()  # agent policy that uses the observation and info
-        observation, reward, terminated, truncated, info = env.step(action)
-        print(env.render())
-        
-
-        if terminated or truncated:
-            observation, info = env.reset()
-    env.close() 
+    # uncomment next 2 lines if you want to run Q-Learning
+    # q_table = train_q_learning(env, 0.9, 0.8, 1.0, 0.005, 1000, 99)
+    # run_q_learning(env, q_table, 99)
