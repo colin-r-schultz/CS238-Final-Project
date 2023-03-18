@@ -185,6 +185,7 @@ class TaxiEnv(Env):
         num_columns = 5
         self.max_row = num_rows - 1
         self.max_col = num_columns - 1
+        self.state_shape = [num_rows, num_columns, len(locs) + 1, len(locs)]
         self.initial_state_distrib = np.zeros(num_states)
         num_actions = 6
         self.P = {
@@ -269,27 +270,10 @@ class TaxiEnv(Env):
         return (new_row, new_col)
 
     def encode(self, taxi_row, taxi_col, pass_loc, dest_idx):
-        # (5) 5, 5, 4
-        i = taxi_row
-        i *= 5
-        i += taxi_col
-        i *= 5
-        i += pass_loc
-        i *= 4
-        i += dest_idx
-        return i
+        return np.ravel_multi_index(([taxi_row, taxi_col, pass_loc, dest_idx]), self.state_shape)
 
     def decode(self, i):
-        out = []
-        out.append(i % 4)
-        i = i // 4
-        out.append(i % 5)
-        i = i // 5
-        out.append(i % 5)
-        i = i // 5
-        out.append(i)
-        assert 0 <= i < 5
-        return reversed(out)
+        return np.unravel_index(i, self.state_shape)
 
     def action_mask(self, state: int):
         """Computes an action mask for the action space using the state information."""
@@ -550,6 +534,8 @@ class TaxiEnv(Env):
 
 if __name__ == "__main__":
     env = TaxiEnv("ansi", ice_locs=[(2, 1), (2, 2), (2, 3)], ice_prob=0.1)
+
+
     env.reset()
     for i in range(10):
         action = env.action_space.sample()  # agent policy that uses the observation and info

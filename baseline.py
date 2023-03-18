@@ -1,28 +1,31 @@
-import gymnasium as gym
-import time
+from taxi import TaxiEnv
 
+TEST_ICE_LOCS = [(3, 3), (1, 1), (1, 3), (1, 4)]
+TEST_ICE_PROB = 0.5
+TEST_NOISE = 0.5
 
-env = gym.make("Taxi-v3", render_mode="human").env
+env = TaxiEnv(None, state_uncertainty=TEST_NOISE)
 
 state = env.reset()
 
+num_trials = 10
 num_steps = 200
 rewards = []
-for _ in range(10):
+for _ in range(num_trials):
     reward = 0
     for step in range(num_steps):
 
-        print(f"step: {step}")
+        # print(f"step: {step}")
 
         # sample a random action from the list of available actions
         action = env.action_space.sample()
 
         # perform this action on the environment
-        state = env.step(action)
-        reward += state[1]
+        _state, r, terminated, _truncated, _info = env.step(action)
+        reward += r
 
-        # print the new state
-        env.render()
+        if terminated:
+            break
 
 
     print(f"Reward = {reward}")
@@ -30,5 +33,5 @@ for _ in range(10):
     env.reset()
 # end this instance of the taxi environment
 env.close()
-average = sum(rewards)/10
+average = sum(rewards)/len(rewards)
 print(f"Average reward = {average}")
