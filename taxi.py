@@ -173,73 +173,31 @@ class TaxiEnv(Env):
         "render_fps": 4,
     }
 
-    def __init__(self, render_mode: Optional[str] = None, ice_locs=[], ice_prob=0.0, state_uncertainty=0.0):
+    NOISE_PROB = 0.5
+    ICE_PROPORTION = 0.2
+    SLIP_PROB = 0.5
+
+    ICE_COLOR = (181, 218, 255)
+
+    N_ACTIONS = 6
+    N_STATES = 500
+
+    def __init__(self, render_mode: Optional[str] = None, model_uncertainty=False, state_uncertainty=False):
         self.desc = np.asarray(MAP, dtype="c")
 
-        self.ice_locs = ice_locs
         self.locs = locs = [(0, 0), (0, 4), (4, 0), (4, 3)]
         self.locs_colors = [(255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 0, 255)]
-        self.state_uncertainty = state_uncertainty
+        self.model_uncertainty = model_uncertainty
+        self.noise_prob = self.NOISE_PROB if state_uncertainty else 0
 
-        num_states = 500
         num_rows = 5
         num_columns = 5
         self.max_row = num_rows - 1
         self.max_col = num_columns - 1
         self.state_shape = [num_rows, num_columns, len(locs) + 1, len(locs)]
-        self.initial_state_distrib = np.zeros(num_states)
-        num_actions = 6
-        self.P = {
-            state: {action: [] for action in range(num_actions)}
-            for state in range(num_states)
-        }
-        for row in range(num_rows):
-            for col in range(num_columns):
-                for pass_idx in range(len(locs) + 1):  # +1 for being inside taxi
-                    for dest_idx in range(len(locs)):
-                        state = self.encode(row, col, pass_idx, dest_idx)
-                        if pass_idx < 4 and pass_idx != dest_idx:
-                            self.initial_state_distrib[state] += 1
-                        for action in range(num_actions):
-                            # defaults
-                            new_row, new_col, new_pass_idx = row, col, pass_idx
-                            reward = (
-                                -1
-                            )  # default reward when there is no pickup/dropoff
-                            terminated = False
-                            taxi_loc = (row, col)
-                            if action < 4 and taxi_loc in self.ice_locs:
-                                transitions = []
-                                for a in range(4):
-                                    new_row, new_col = self.next_pos(row, col, a)
-                                    p = 1.0 - ice_prob if a == action else ice_prob / 3
-                                    new_state = self.encode(new_row, new_col, new_pass_idx, dest_idx)
-                                    transitions.append((p, new_state, reward, terminated))
-                            else:
-                                if action < 4:
-                                    new_row, new_col = self.next_pos(row, col, action)
-                                elif action == 4:  # pickup
-                                    if pass_idx < 4 and taxi_loc == locs[pass_idx]:
-                                        new_pass_idx = 4
-                                    else:  # passenger not at location
-                                        reward = -10
-                                elif action == 5:  # dropoff
-                                    if (taxi_loc == locs[dest_idx]) and pass_idx == 4:
-                                        new_pass_idx = dest_idx
-                                        terminated = True
-                                        reward = 20
-                                    elif (taxi_loc in locs) and pass_idx == 4:
-                                        new_pass_idx = locs.index(taxi_loc)
-                                    else:  # dropoff at wrong location
-                                        reward = -10
-                                new_state = self.encode(
-                                    new_row, new_col, new_pass_idx, dest_idx
-                                )
-                                transitions = [(1.0, new_state, reward, terminated)]
-                            self.P[state][action].extend(transitions)
-        self.initial_state_distrib /= self.initial_state_distrib.sum()
-        self.action_space = spaces.Discrete(num_actions)
-        self.observation_space = spaces.Discrete(num_states)
+
+        self.action_space = spaces.Discrete(self.N_ACTIONS)
+        self.observation_space = spaces.Discrete(self.N_STATES)
 
         self.render_mode = render_mode
 
@@ -280,11 +238,11 @@ class TaxiEnv(Env):
         """Computes an action mask for the action space using the state information."""
         mask = np.zeros(6, dtype=np.int8)
         taxi_row, taxi_col, pass_loc, dest_idx = self.decode(state)
-        if taxi_row < 4:
+        if taxi_row < self.max_row:
             mask[0] = 1
         if taxi_row > 0:
             mask[1] = 1
-        if taxi_col < 4 and self.desc[taxi_row + 1, 2 * taxi_col + 2] == b":":
+        if taxi_col < self.max_col and self.desc[taxi_row + 1, 2 * taxi_col + 2] == b":":
             mask[2] = 1
         if taxi_col > 0 and self.desc[taxi_row + 1, 2 * taxi_col] == b":":
             mask[3] = 1
@@ -299,7 +257,7 @@ class TaxiEnv(Env):
     
     def _add_noise(self, s):
         taxi_row, taxi_col, pass_loc, dest_idx = self.decode(s)
-        if pass_loc < len(self.locs) and self.np_random.random() < self.state_uncertainty:
+        if pass_loc < len(self.locs) and self.np_random.random() < self.noise_prob:
             pass_loc = self.np_random.integers(0, len(self.locs))
         return self.encode(taxi_row, taxi_col, pass_loc, dest_idx)
 
@@ -313,6 +271,65 @@ class TaxiEnv(Env):
         if self.render_mode == "human":
             self.render()
         return (int(self._add_noise(s)), r, t, False, {"prob": p, "action_mask": self.action_mask(s)})
+    
+    def setup_transitions(self):
+        self.initial_state_distrib = np.zeros(self.N_STATES)
+        self.P = {
+            state: {action: [] for action in range(self.N_ACTIONS)}
+            for state in range(self.N_STATES)
+        }
+        for row in range(self.max_row + 1):
+            for col in range(self.max_col + 1):
+                for pass_idx in range(len(self.locs) + 1):  # +1 for being inside taxi
+                    for dest_idx in range(len(self.locs)):
+                        state = self.encode(row, col, pass_idx, dest_idx)
+                        if pass_idx < 4 and pass_idx != dest_idx:
+                            self.initial_state_distrib[state] += 1
+                        for action in range(self.N_ACTIONS):
+                            # defaults
+                            new_row, new_col, new_pass_idx = row, col, pass_idx
+                            reward = (
+                                -1
+                            )  # default reward when there is no pickup/dropoff
+                            terminated = False
+                            taxi_loc = (row, col)
+                            if action < 4 and taxi_loc in self.ice_locs:
+                                transitions = []
+                                for a in range(4):
+                                    new_row, new_col = self.next_pos(row, col, a)
+                                    p = 1.0 - self.SLIP_PROB if a == action else self.SLIP_PROB / 3
+                                    new_state = self.encode(new_row, new_col, new_pass_idx, dest_idx)
+                                    transitions.append((p, new_state, reward, terminated))
+                            else:
+                                if action < 4:
+                                    new_row, new_col = self.next_pos(row, col, action)
+                                elif action == 4:  # pickup
+                                    if pass_idx < 4 and taxi_loc == self.locs[pass_idx]:
+                                        new_pass_idx = 4
+                                    else:  # passenger not at location
+                                        reward = -10
+                                elif action == 5:  # dropoff
+                                    if (taxi_loc == self.locs[dest_idx]) and pass_idx == 4:
+                                        new_pass_idx = dest_idx
+                                        terminated = True
+                                        reward = 20
+                                    elif (taxi_loc in self.locs) and pass_idx == 4:
+                                        new_pass_idx = self.locs.index(taxi_loc)
+                                    else:  # dropoff at wrong location
+                                        reward = -10
+                                new_state = self.encode(
+                                    new_row, new_col, new_pass_idx, dest_idx
+                                )
+                                transitions = [(1.0, new_state, reward, terminated)]
+                            self.P[state][action].extend(transitions)
+        self.initial_state_distrib /= self.initial_state_distrib.sum()
+
+    def add_ice(self):
+        self.ice_locs = []
+        for row in range(self.max_row + 1):
+            for col in range(self.max_col + 1):
+                if (row, col) not in self.locs and self.np_random.random() < self.ICE_PROPORTION:
+                    self.ice_locs.append((row, col))
 
     def reset(
         self,
@@ -321,6 +338,9 @@ class TaxiEnv(Env):
         options: Optional[dict] = None,
     ):
         super().reset(seed=seed)
+        if self.model_uncertainty:
+            self.add_ice()
+        self.setup_transitions()
         self.s = categorical_sample(self.initial_state_distrib, self.np_random)
 
         self.lastaction = None
@@ -414,7 +434,7 @@ class TaxiEnv(Env):
         if self.background_img is None:
             file_name = path.join(path.dirname(file), "img/taxi_background.png")
             self.background_img = pygame.transform.scale(
-                pygame.image.load(file_name), self.cell_size
+                pygame.image.load(file_name).convert(), self.cell_size
             )
 
         desc = self.desc
@@ -446,6 +466,13 @@ class TaxiEnv(Env):
             color_cell.fill(color)
             loc = self.get_surf_loc(cell)
             self.window.blit(color_cell, (loc[0], loc[1] + 10))
+        
+        for loc in self.ice_locs:
+            color_cell = pygame.Surface(self.cell_size)
+            color_cell.set_alpha(225)
+            color_cell.fill(self.ICE_COLOR)
+            loc = self.get_surf_loc(loc)
+            self.window.blit(color_cell, (loc[0], loc[1] + 10))
 
         taxi_row, taxi_col, pass_idx, dest_idx = self.decode(self.s)
 
@@ -471,6 +498,8 @@ class TaxiEnv(Env):
             )
 
         if mode == "human":
+            for _ in pygame.event.get():
+                pass
             pygame.display.flip()
             self.clock.tick(self.metadata["render_fps"])
         elif mode == "rgb_array":
@@ -555,7 +584,6 @@ def train_q_learning(env, learn_rate, discount_rate, epsilon, decay_rate, num_ru
 
 def run_q_learning(env, q_table, max_steps):
     state = env.reset()
-    terminated = False
     rewards = 0
 
     for step in range(max_steps):
@@ -575,7 +603,6 @@ def run_q_learning(env, q_table, max_steps):
 
 def run_random_agent(env, max_steps):
     state = env.reset()
-    terminated = False
     rewards = 0
 
     for step in range(max_steps):
@@ -598,10 +625,11 @@ def run_random_agent(env, max_steps):
 # All other assets by Mel Tillery http://www.cyaneus.com/
 
 if __name__ == "__main__":
-    env = TaxiEnv("ansi", ice_locs=[(2, 1), (2, 2), (2, 3)], ice_prob=0.1)
+    # env = gym.make("Taxi-v3", render_mode="human")
+    env = TaxiEnv("human", model_uncertainty=True)
 
     # uncomment next line if you want to run Random Agent
-    # run_random_agent(env, 99)
+    run_random_agent(env, 99)
 
     # uncomment next 2 lines if you want to run Q-Learning
     # q_table = train_q_learning(env, 0.9, 0.8, 1.0, 0.005, 1000, 99)
