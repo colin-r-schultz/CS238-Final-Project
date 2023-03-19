@@ -4,6 +4,7 @@ from io import StringIO
 from os import path
 from typing import Optional
 import random
+from collections import defaultdict
 
 import numpy as np
 
@@ -232,6 +233,8 @@ class TaxiEnv(Env):
         return np.ravel_multi_index(([taxi_row, taxi_col, pass_loc, dest_idx]), self.state_shape)
 
     def decode(self, i):
+        """Returns row, col, pass_loc, dest_idx
+        """
         return np.unravel_index(i, self.state_shape)
 
     def action_mask(self, state: int):
@@ -619,18 +622,76 @@ def run_random_agent(env, max_steps):
     print(f"Final Score: {rewards}")
     env.close() 
 
+# def update_belief(env, b, a, obs):
+#     r, c, pass_loc, dest = env.decode(obs)
+#     b_next = np.zeros_like(b)
+#     if pass_loc == len(env.locs): # if passenger is in car we are certain
+#         b_next[-1] = 1
+#         return b_next
+#     if a == 5: # dropoff
+#         b_next[env.locs.index((r, c))] = 1
+#         return b_next
+#     for i in range(len(env.locs)):
+#         p_o_given_s = env.noise_prob / len(env.locs)
+#         if i == pass_loc:
+#             p_o_given_s += 1 - env.noise_prob
+#         b_next[i] = b[1] * p_o_given_s
+#     return b_next / np.sum(b_next)
 
+# def update_models(env, state, a, r, obs, transition_counts, reward_sums, reward_counts):
+#     transition_counts[state,a,obs] += 1
+#     reward_sums[state, a] += r
+#     reward_counts[state, a] += 1
+
+# def update_value_fn(value_fn, points, transition_counts, reward_sums, gamma):
+#     n = np.sum(transition_counts[points, :, :], axis=-1)
+#     r = reward_sums[points, :] / n
+#     t = transition_counts[points, :, :] / n[..., None]
+#     value_fn[points] = np.max(r + gamma * np.sum(t * value_fn, axis=2), axis=1)
+
+# def train_mle_model(env, num_runs, max_steps, discount_rate, epsilon, decay_rate):
+#     state_size = env.observation_space.n
+#     action_size = env.action_space.n
+#     transition_counts = np.zeros((state_size, action_size, state_size), np.float32)
+#     reward_sums = np.zeros((state_size, action_size), np.float32)
+#     reward_counts = np.zeros((state_size, action_size), np.float32)
+#     value_fn = np.zeros(state_size, np.float32)
+#     for run in range(num_runs):
+#         epsilon = np.exp(-decay_rate * run)
+#         print(f"Run #{run + 1}")
+#         obs, _ = env.reset()
+#         # b = update_belief(env, np.ones(len(env.locs) + 1, float), None, obs)
+#         state = obs
+#         for step in range(max_steps):
+#             if random.uniform(0, 1) < epsilon:
+#                 action = env.action_space.sample()
+#             else:
+#                 action = int(input())
+#             obs, reward, terminated, _, _ = env.step(action)
+#             # b_next = update_belief(env, b, action, obs)
+#             update_models(env, state, action, reward, obs, transition_counts, reward_sums, reward_counts)
+#             update_points = np.r_[state, np.random.random_integers(0, state_size, )]
+
+#             # b = b_next
+#             state = obs
+
+#             if terminated:
+#                 break
+
+#     return
 
 # Taxi rider from https://franuka.itch.io/rpg-asset-pack
 # All other assets by Mel Tillery http://www.cyaneus.com/
 
 if __name__ == "__main__":
     # env = gym.make("Taxi-v3", render_mode="human")
-    env = TaxiEnv("human", model_uncertainty=True)
+    env = TaxiEnv("human", model_uncertainty=True, state_uncertainty=True)
 
     # uncomment next line if you want to run Random Agent
-    run_random_agent(env, 99)
+    # run_random_agent(env, 99)
 
     # uncomment next 2 lines if you want to run Q-Learning
     # q_table = train_q_learning(env, 0.9, 0.8, 1.0, 0.005, 1000, 99)
     # run_q_learning(env, q_table, 99)
+
+    train_mle_model(env, 1, 20)
