@@ -7,6 +7,7 @@ import random
 from collections import defaultdict
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 import gymnasium as gym
 from gymnasium import Env, spaces, utils
@@ -188,6 +189,7 @@ class TaxiEnv(Env):
 
         self.locs = locs = [(0, 0), (0, 4), (4, 0), (4, 3)]
         self.locs_colors = [(255, 0, 0), (0, 255, 0), (255, 255, 0), (0, 0, 255)]
+        self.ice_locs = []
         self.model_uncertainty = model_uncertainty
         self.noise_prob = self.NOISE_PROB if state_uncertainty else 0
         self.ice_locs = []
@@ -562,48 +564,82 @@ class TaxiEnv(Env):
             pygame.display.quit()
             pygame.quit()
 
-def train_q_learning(env, learn_rate, discount_rate, decay_rate, num_runs, max_steps):
+
+def plot_run_data(reward_list, data_title, steps_or_runs):
+    xpoints = np.arange(1, len(reward_list) + 1)
+    ypoints = np.array(reward_list)
+
+    plt.plot(xpoints, ypoints)
+
+    plt.title(data_title)
+    if steps_or_runs == "steps":
+        plt.xlabel("Step #")
+        plt.ylabel("Reward After Step")
+    elif steps_or_runs == "runs":
+        plt.xlabel("Run #")
+        plt.ylabel("Reward After Run")
+    plt.show()
+
+def train_q_learning(env, learn_rate, discount_rate):
     state_size = env.observation_space.n
     action_size = env.action_space.n
     q_table = np.zeros((state_size, action_size))
+    num_runs = 100
+    epsilon = 0.1
+    reward_list = []
+    steps_list = []
     for run in range(num_runs):
-        epsilon = np.exp(-decay_rate * run)
+        # epsilon = np.exp(-decay_rate * run)
         print(f"Run #{run}".format(run + 1))
-        state = env.reset()
+        state = env.reset()[0]
         terminated = False
-        for step in range(max_steps):
-            cur_state = state[0]
+        rewards = 0
+        steps = 0
+        while not terminated:
             if random.uniform(0, 1) < epsilon:
                 action = env.action_space.sample()
             else:
-                action = np.argmax(q_table[cur_state, :])
+                action = np.argmax(q_table[state])
             observation, reward, terminated, truncated, info = env.step(action)
-            q_table[cur_state, action] = q_table[cur_state,action] + learn_rate*(reward + discount_rate*np.max(q_table[observation, :]) - q_table[cur_state, action])
-            state = (observation, info)
-
-            if terminated:
+            q_table[state, action] = (1 - learn_rate)*q_table[state,action] + learn_rate*(reward + discount_rate*np.max(q_table[observation]))
+            state = observation
+            rewards += reward
+            steps += 1
+            if steps > 3000:
                 break
-
+        steps_list.append(steps)
+        reward_list.append(rewards)
+    print(f"Average number of steps per run: {np.mean(np.array(steps_list))}")
+    plot_run_data(reward_list, "Rewards for Q-Learning Training Runs", "runs")
     return q_table
 
-def run_q_learning(env, q_table, max_steps):
+def run_q_learning(env, q_table, render_flag):
     state = env.reset()
     rewards = 0
-
-    for step in range(max_steps):
+    terminated = False
+    reward_list = []
+    step = 0
+    while not terminated:
         print(f"Step {step}".format(step + 1))
         cur_state = state[0]
-        action = np.argmax(q_table[cur_state, :])
+        action = np.argmax(q_table[cur_state])
         observation, reward, terminated, truncated, info = env.step(action)
         rewards += reward
-        print(env.render())
+        temp_reward = rewards
+        if render_flag:
+            env.render()
         print(f"Score: {rewards}")
         state = (observation, info)
-
-        if terminated:
+        reward_list.append(temp_reward)
+        step += 1
+        if step > 3000:
             break
+
     print(f"Final Score: {rewards}")
+    print(f"Number of steps taken: {step}")
+    plot_run_data(reward_list, "Rewards for Final Trained Q-Learning Run", "steps")
     env.close()
+    return rewards
 
 def run_random_agent(env, max_steps):
     state = env.reset()
@@ -621,7 +657,6 @@ def run_random_agent(env, max_steps):
             break
     
     print(f"Final Score: {rewards}")
-    env.close() 
 
 def update_models(env, state, a, r, obs, transition_counts, reward_sums):
     transition_counts[state,a,obs] += 1
@@ -677,36 +712,23 @@ def run_mle_model(env, model, discount_rate, max_steps):
     state, _ = env.reset()
     rewards = 0
 
-    for step in range(max_steps):
-        print(f"Step {step}".format(step + 1))
-        action = best_action(model["value_fn"], state, model["transition_counts"], model["reward_sums"], discount_rate)
-        observation, reward, terminated, truncated, info = env.step(action)
-        rewards += reward
-        print(env.render())
-        print(f"Score: {rewards}")
-        state = observation
+#             if terminated:
+#                 break
 
-        if terminated:
-            break
-    print(f"Final Score: {rewards}")
+#     return
 
 # Taxi rider from https://franuka.itch.io/rpg-asset-pack
 # All other assets by Mel Tillery http://www.cyaneus.com/
 
 if __name__ == "__main__":
     # env = gym.make("Taxi-v3", render_mode="human")
-    discount_rate = 0.9
-    decay_rate = 0.005
-    env = TaxiEnv(None, model_uncertainty=True, state_uncertainty=True)
+    env = TaxiEnv(None, model_uncertainty=False, state_uncertainty=True)
 
     # uncomment next line if you want to run Random Agent
     # run_random_agent(env, 99)
 
     # uncomment next 2 lines if you want to run Q-Learning
-    # q_table = train_q_learning(env, 0.9, discount_rate, decay_rate, 1000, 99)
-    # run_q_learning(env, q_table, 99)
+    q_table = train_q_learning(env, 0.1, 0.6)
+    run_q_learning(env, q_table, False)
 
-    model = train_mle_model(env, discount_rate, decay_rate, 1000, 99)
-    env = TaxiEnv("human", state_uncertainty=True)
-    for i in range(10):
-        run_mle_model(env, model, discount_rate, 50)
+    # train_mle_model(env, 1, 20)
