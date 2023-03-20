@@ -4,10 +4,10 @@ from io import StringIO
 from os import path
 from typing import Optional
 import random
-from collections import defaultdict
 
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image
 
 import gymnasium as gym
 from gymnasium import Env, spaces, utils
@@ -388,6 +388,7 @@ class TaxiEnv(Env):
                 pygame.display.set_caption("Taxi")
                 self.window = pygame.display.set_mode(WINDOW_SIZE)
             elif mode == "rgb_array":
+                pygame.display.set_mode(WINDOW_SIZE)
                 self.window = pygame.Surface(WINDOW_SIZE)
 
         assert (
@@ -580,16 +581,15 @@ def plot_run_data(reward_list, data_title, steps_or_runs):
         plt.ylabel("Reward After Run")
     plt.show()
 
-def train_q_learning(env, learn_rate, discount_rate):
+def train_q_learning(env, learn_rate, discount_rate=0.9, decay_rate=0.0005, num_runs=2000, max_steps=100):
     state_size = env.observation_space.n
     action_size = env.action_space.n
     q_table = np.zeros((state_size, action_size))
-    num_runs = 100
     epsilon = 0.1
     reward_list = []
     steps_list = []
     for run in range(num_runs):
-        # epsilon = np.exp(-decay_rate * run)
+        epsilon = np.exp(-decay_rate * run)
         print(f"Run #{run}".format(run + 1))
         state = env.reset()[0]
         terminated = False
@@ -605,7 +605,7 @@ def train_q_learning(env, learn_rate, discount_rate):
             state = observation
             rewards += reward
             steps += 1
-            if steps > 3000:
+            if steps > max_steps:
                 break
         steps_list.append(steps)
         reward_list.append(rewards)
@@ -613,52 +613,54 @@ def train_q_learning(env, learn_rate, discount_rate):
     plot_run_data(reward_list, "Rewards for Q-Learning Training Runs", "runs")
     return q_table
 
-def run_q_learning(env, q_table, render_flag):
-    state = env.reset()
-    rewards = 0
-    terminated = False
+def run_q_learning(env, q_table, num_runs=100, max_steps=100, render_flag=False):
     reward_list = []
-    step = 0
-    while not terminated:
-        print(f"Step {step}".format(step + 1))
-        cur_state = state[0]
-        action = np.argmax(q_table[cur_state])
-        observation, reward, terminated, truncated, info = env.step(action)
-        rewards += reward
-        temp_reward = rewards
-        if render_flag:
-            env.render()
-        print(f"Score: {rewards}")
-        state = (observation, info)
-        reward_list.append(temp_reward)
-        step += 1
-        if step > 3000:
-            break
+    # frames = [env.render()]
+    for i in range(num_runs):
+        step = 0
+        state, _ = env.reset()
+        rewards = 0
+        terminated = False
+        while not terminated:
+            # print(f"Step {step}".format(step + 1))
+            action = np.argmax(q_table[state])
+            observation, reward, terminated, truncated, info = env.step(action)
+            rewards += reward
+            # if render_flag:
+            #     frames.append(env.render())
+            # print(f"Score: {rewards}")
+            state = observation
+            step += 1
+            if step > max_steps:
+                break
+        reward_list.append(rewards)
 
-    print(f"Final Score: {rewards}")
+    print(f"Avg Score: {np.mean(reward_list)}")
     print(f"Number of steps taken: {step}")
-    plot_run_data(reward_list, "Rewards for Final Trained Q-Learning Run", "steps")
-    env.close()
+    # frames = list(map(Image.fromarray, frames))
+    # frames[0].save("out.gif", save_all=True, append_images=frames[1:])
+    # plot_run_data(reward_list, "Rewards for Final Trained Q-Learning Run", "steps")
     return rewards
 
-def run_random_agent(env, max_steps):
-    state = env.reset()
-    rewards = 0
+def run_random_agent(env, num_runs=100, max_steps=100):
+    reward_list = []
+    for _ in range(num_runs):
+        env.reset()
+        rewards = 0
 
-    for step in range(max_steps):
-        print(f"Step {step}".format(step + 1))
-        action = env.action_space.sample()  # agent policy that uses the observation and info
-        observation, reward, terminated, truncated, info = env.step(action)
-        rewards += reward
-        print(env.render())
-        print(f"Score: {rewards}")
+        for step in range(max_steps):
+            action = env.action_space.sample()  # agent policy that uses the observation and info
+            observation, reward, terminated, truncated, info = env.step(action)
+            rewards += reward
 
-        if terminated:
-            break
+            if terminated:
+                break
+        reward_list.append(rewards)
     
-    print(f"Final Score: {rewards}")
+    
+    print(f"Avg Score: {np.mean(rewards)}")
 
-def update_models(env, state, a, r, obs, transition_counts, reward_sums):
+def update_models(state, a, r, obs, transition_counts, reward_sums):
     transition_counts[state,a,obs] += 1
     reward_sums[state, a] += r
 
@@ -674,7 +676,7 @@ def best_action(value_fn, state, transition_counts, reward_sums, gamma):
     t = transition_counts[state, :, :] / n[..., None]
     return np.argmax(r + gamma * np.sum(t * value_fn, axis=1))
 
-def train_mle_model(env, discount_rate, decay_rate, num_runs, max_steps):
+def train_mle_model(env, discount_rate=0.9, decay_rate=0.005, num_runs=2000, max_steps=100):
     num_random_points = 15
     state_size = env.observation_space.n
     action_size = env.action_space.n
@@ -694,7 +696,7 @@ def train_mle_model(env, discount_rate, decay_rate, num_runs, max_steps):
                 action = best_action(value_fn, state, transition_counts, reward_sums, discount_rate)
             
             obs, reward, terminated, _, _ = env.step(action)
-            update_models(env, state, action, reward, obs, transition_counts, reward_sums)
+            update_models(state, action, reward, obs, transition_counts, reward_sums)
             update_points = np.r_[state, np.random.randint(0, state_size, num_random_points)]
             update_value_fn(value_fn, update_points, transition_counts, reward_sums, discount_rate)
             state = obs
@@ -708,27 +710,50 @@ def train_mle_model(env, discount_rate, decay_rate, num_runs, max_steps):
         "value_fn": value_fn
     }
 
-def run_mle_model(env, model, discount_rate, max_steps):
-    state, _ = env.reset()
-    rewards = 0
+def run_mle_model(env, model, discount_rate, num_runs=100, max_steps=100):
+    reward_list = []
+    # frames = [env.render()]
+    for i in range(num_runs):
+        step = 0
+        state, _ = env.reset()
+        rewards = 0
+        terminated = False
+        while not terminated:
+            # print(f"Step {step}".format(step + 1))
+            action = best_action(model["value_fn"],state, model["transition_counts"], model["reward_sums"], discount_rate)
+            observation, reward, terminated, truncated, info = env.step(action)
+            rewards += reward
+            # if render_flag:
+            #     frames.append(env.render())
+            # print(f"Score: {rewards}")
+            state = observation
+            step += 1
+            if step > max_steps:
+                break
+        reward_list.append(rewards)
 
-#             if terminated:
-#                 break
+    print(f"Avg Score: {np.mean(reward_list)}")
+    print(f"Number of steps taken: {step}")
+    # frames = list(map(Image.fromarray, frames))
+    # frames[0].save("out.gif", save_all=True, append_images=frames[1:])
+    # plot_run_data(reward_list, "Rewards for Final Trained Q-Learning Run", "steps")
+    return rewards
 
-#     return
 
 # Taxi rider from https://franuka.itch.io/rpg-asset-pack
 # All other assets by Mel Tillery http://www.cyaneus.com/
 
 if __name__ == "__main__":
     # env = gym.make("Taxi-v3", render_mode="human")
-    env = TaxiEnv(None, model_uncertainty=False, state_uncertainty=True)
+    env = TaxiEnv("rgb_array", model_uncertainty=False, state_uncertainty=False)
 
     # uncomment next line if you want to run Random Agent
-    # run_random_agent(env, 99)
+    # run_random_agent(env)
 
     # uncomment next 2 lines if you want to run Q-Learning
-    q_table = train_q_learning(env, 0.1, 0.6)
-    run_q_learning(env, q_table, False)
 
-    # train_mle_model(env, 1, 20)
+    # q_table = train_q_learning(env, 0.1, 0.9)
+    # run_q_learning(env, q_table)
+
+    model = train_mle_model(env, 0.9)
+    run_mle_model(env, model, 0.9)
